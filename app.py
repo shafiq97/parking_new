@@ -7,6 +7,43 @@ app = Flask(__name__)
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 
+@app.route('/history/<email>', methods=['GET'])
+def fetch_history(email):
+    try:
+        # Connect to your MySQL database
+        db_connection = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="",
+            database="parking_db"
+        )
+        cursor = db_connection.cursor(dictionary=True)
+
+        # Perform inner join to fetch the required data
+        sql = """
+        SELECT pr.*
+        FROM parking_records pr
+        INNER JOIN users u ON pr.plate_number = u.license_plate
+        WHERE u.email = %s
+        """
+        cursor.execute(sql, (email,))
+        history = cursor.fetchall()
+
+        # Close cursor and database connection
+        cursor.close()
+        db_connection.close()
+
+        return jsonify(history), 200
+
+    except mysql.connector.Error as err:
+        app.logger.error(f"Database error: {err}")
+        return jsonify({'error': str(err)}), 500
+
+    except Exception as e:
+        app.logger.error(f"Unexpected error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/payments', methods=['POST'])
 def add_payment():
     data = request.json

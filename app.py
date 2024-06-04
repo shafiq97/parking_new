@@ -1,109 +1,104 @@
-import json
-import time
-from collections import OrderedDict
-import cv2
-import requests
+from flask import Flask, request, jsonify
 import mysql.connector
-from datetime import datetime
+import logging
 
-API_TOKEN = '46569c6bbf83ec3257068d20a74113e420598687'
+app = Flask(__name__)
 
-# Database connection setup
-db_config = {
-    'user': 'root',
-    'password': '',
-    'host': '127.0.0.1',
-    'database': 'parking_db'
-}
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
 
-# Track detected plates
-detected_plates = {}
-
-def perform_ocr(image):
-    _, image_encoded = cv2.imencode('.jpg', image)
-    response = requests.post(
-        'https://api.platerecognizer.com/v1/plate-reader/',
-        files=dict(upload=image_encoded.tobytes()),
-        data=dict(regions='fr'),  # Adjust the regions as needed
-        headers={'Authorization': 'Token ' + API_TOKEN}
-    )
+@app.route('/payments', methods=['POST'])
+def add_payment():
+    data = request.json
+    app.logger.debug(f"Received data: {data}")
     
-    result = response.json(object_pairs_hook=OrderedDict)
-    if result['results']:
-        num = result['results'][0]['plate']
-        characters = result['results'][0]['candidates'][0]['plate']
-        return num, characters
-    return 'Unknown', 'Unknown'
+    # Perform validation on the received data if necessary
+    required_fields = ['name', 'vehicalNumber', 'slotId', 'slotName', 'parkingTimeInMin', 'amount', 'floor']
+    missing_fields = [field for field in required_fields if field not in data]
+    if missing_fields:
+        app.logger.error(f"Missing fields: {missing_fields}")
+        return jsonify({'error': f'Missing data: {missing_fields}'}), 400
 
-def store_or_update_record(plate_number, extracted_characters):
-    conn = mysql.connector.connect(**db_config)
-    cursor = conn.cursor()
+    try:
+        # Connect to your MySQL database
+        db_connection = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="",
+            database="parking_db"
+        )
 
-    check_in_time = datetime.now()
-    check_out_time = check_in_time  # For updating the checkout time
-    other_fields = "Any other necessary info"
+        cursor = db_connection.cursor()
 
-    # Check if there's an existing record with a null checkout time
-    query_check = """
-    SELECT id FROM parking_records
-    WHERE plate_number = %s AND check_out_time IS NULL
-    """
-    cursor.execute(query_check, (plate_number,))
-    result = cursor.fetchone()
+        # Insert the payment data into the database
+        sql = "INSERT INTO payments (name, vehical_number, slot_id, slot_name, parking_time_in_minutes, amount, floor) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+        values = (data['name'], data['vehicalNumber'], data['slotId'], data['slotName'], data['parkingTimeInMin'], data['amount'], data['floor'])
+        cursor.execute(sql, values)
 
-    if result:
-        # Update the checkout time
-        query_update = """
-        UPDATE parking_records
-        SET check_out_time = %s
-        WHERE id = %s
-        """
-        cursor.execute(query_update, (check_out_time, result[0]))
-    else:
-        # Insert a new record
-        query_insert = """
-        INSERT INTO parking_records (plate_number, extracted_characters, check_in_time, check_out_time, other_fields)
-        VALUES (%s, %s, %s, NULL, %s)
-        """
-        cursor.execute(query_insert, (plate_number, extracted_characters, check_in_time, other_fields))
+        # Commit changes to the database
+        db_connection.commit()
 
-    conn.commit()
-    cursor.close()
-    conn.close()
+        # Close cursor and database connection
+        cursor.close()
+        db_connection.close()
 
-def main():
-    cap = cv2.VideoCapture(0)
-    previous_plate = 'Unknown'
+        # Return a success message
+        return jsonify({'message': 'Payment added successfully'}), 200
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    except mysql.connector.Error as err:
+        # Log the error
+        app.logger.error(f"Database error: {err}")
+        return jsonify({'error': str(err)}), 500
 
-        plate_number, extracted_characters = perform_ocr(frame)
+    except Exception as e:
+        # Log any other exceptions
+        app.logger.error(f"Unexpected error: {e}")
+        return jsonify({'error': str(e)}), 500
 
-        if plate_number == 'Unknown' and previous_plate != 'Unknown' and previous_plate in detected_plates:
-            store_or_update_record(previous_plate, detected_plates[previous_plate]['extracted_characters'])
-            del detected_plates[previous_plate]
-        
-        if plate_number != 'Unknown':
-            detected_plates[plate_number] = {'extracted_characters': extracted_characters}
-        
-        previous_plate = plate_number
-        
-        # Display the OCR results on the frame
-        cv2.putText(frame, f'Number Plate: {plate_number}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(frame, f'Characters: {extracted_characters}', (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        
-        # Show the frame
-        cv2.imshow('Number Plate Detection', frame)
-        
-        # Break the loop on 'q' key press
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.json
+    app.logger.debug(f"Received data: {data}")
+    
+    # Perform validation on the received data if necessary
+    if not all(k in data for k in ('userId', 'email', 'studentId', 'licenseNumber', 'licensePlate')):
+        return jsonify({'error': 'Missing data'}), 400
 
-    cap.release()
-    cv2.destroyAllWindows()
+    try:
+        # Connect to your MySQL database
+        db_connection = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="",
+            database="parking_db"
+        )
+
+        cursor = db_connection.cursor()
+
+        # Insert the user data into the database
+        sql = "INSERT INTO users (user_id, email, student_id, license_number, license_plate) VALUES (%s, %s, %s, %s, %s)"
+        values = (data['userId'], data['email'], data['studentId'], data['licenseNumber'], data['licensePlate'])
+        cursor.execute(sql, values)
+
+        # Commit changes to the database
+        db_connection.commit()
+
+        # Close cursor and database connection
+        cursor.close()
+        db_connection.close()
+
+        # Return a success message
+        return jsonify({'message': 'User registered successfully'}), 200
+
+    except mysql.connector.Error as err:
+        # Log the error
+        app.logger.error(f"Database error: {err}")
+        return jsonify({'error': str(err)}), 500
+
+    except Exception as e:
+        # Log any other exceptions
+        app.logger.error(f"Unexpected error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    main()
+    app.run(debug=True, port=5001)

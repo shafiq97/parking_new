@@ -13,7 +13,7 @@ def add_payment():
     app.logger.debug(f"Received data: {data}")
     
     # Perform validation on the received data if necessary
-    required_fields = ['name', 'vehicalNumber', 'slotId', 'slotName', 'parkingTimeInMin', 'amount', 'floor']
+    required_fields = ['email', 'vehicalNumber', 'slotId', 'slotName', 'parkingTimeInMin', 'amount', 'floor']
     missing_fields = [field for field in required_fields if field not in data]
     if missing_fields:
         app.logger.error(f"Missing fields: {missing_fields}")
@@ -31,8 +31,8 @@ def add_payment():
         cursor = db_connection.cursor()
 
         # Insert the payment data into the database
-        sql = "INSERT INTO payments (name, vehical_number, slot_id, slot_name, parking_time_in_minutes, amount, floor) VALUES (%s, %s, %s, %s, %s, %s, %s)"
-        values = (data['name'], data['vehicalNumber'], data['slotId'], data['slotName'], data['parkingTimeInMin'], data['amount'], data['floor'])
+        sql = "INSERT INTO payments (email, vehical_number, slot_id, slot_name, parking_time_in_minutes, amount, floor) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+        values = (data['email'], data['vehicalNumber'], data['slotId'], data['slotName'], data['parkingTimeInMin'], data['amount'], data['floor'])
         cursor.execute(sql, values)
 
         # Commit changes to the database
@@ -89,6 +89,41 @@ def register():
 
         # Return a success message
         return jsonify({'message': 'User registered successfully'}), 200
+
+    except mysql.connector.Error as err:
+        # Log the error
+        app.logger.error(f"Database error: {err}")
+        return jsonify({'error': str(err)}), 500
+
+    except Exception as e:
+        # Log any other exceptions
+        app.logger.error(f"Unexpected error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/payments/<email>', methods=['GET'])
+def get_payments(email):
+    try:
+        # Connect to your MySQL database
+        db_connection = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="",
+            database="parking_db"
+        )
+
+        cursor = db_connection.cursor(dictionary=True)
+
+        # Query to get payments data filtered by email
+        sql = "SELECT * FROM payments WHERE email = %s"
+        cursor.execute(sql, (email,))
+        payments = cursor.fetchall()
+
+        # Close cursor and database connection
+        cursor.close()
+        db_connection.close()
+
+        # Return payments data
+        return jsonify(payments), 200
 
     except mysql.connector.Error as err:
         # Log the error
